@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "proc.h": "c",
+        "cstdlib": "c",
+        "user.h": "c",
+        "sysinfo.h": "c",
+        "types.h": "c"
+    },
+    "C_Cpp.errorSquiggles": "Enabled"
+}

@@ -6,7 +6,9 @@
 
 void
 sinfo(struct sysinfo *info) {
-  if (sysinfo(info) < 0) {
+  int n = sysinfo(info);
+  if (n < 0) {
+    printf("%d\n", n);
     printf("FAIL: sysinfo failed");
     exit(1);
   }
