@@ -127,6 +127,13 @@ found:
     return 0;
   }
 
+  // Allocate a speed up page table
+  if ((p->usyscall = (struct usyscall *)kalloc()) == 0 ) {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
@@ -135,11 +142,15 @@ found:
     return 0;
   }
 
+
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
+
+  p->usyscall->pid = p->pid;
 
   return p;
 }
@@ -154,7 +165,9 @@ freeproc(struct proc *p)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
   if(p->pagetable)
-    proc_freepagetable(p->pagetable, p->sz);
+    proc_freepagetable(p->pagetable, p->sz); 
+  if (p->usyscall) 
+    kfree((void *)p->usyscall);
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -164,6 +177,7 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  p->usyscall = 0;
 }
 
 // Create a user page table for a given process,
@@ -177,6 +191,8 @@ proc_pagetable(struct proc *p)
   pagetable = uvmcreate();
   if(pagetable == 0)
     return 0;
+
+  
 
   // map the trampoline code (for system call return)
   // at the highest user virtual address.
@@ -196,6 +212,15 @@ proc_pagetable(struct proc *p)
     return 0;
   }
 
+  // map the read-only page at USYSCALL
+  if(mappages(pagetable, USYSCALL, PGSIZE,
+              (uint64)(p->usyscall), PTE_R | PTE_U) < 0){
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+    uvmunmap(pagetable, TRAPFRAME, 1, 0);
+    uvmfree(pagetable, 0);
+    return 0;
+  }
+
   return pagetable;
 }
 
@@ -206,6 +231,7 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
+  uvmunmap(pagetable, USYSCALL, 1, 0);
   uvmfree(pagetable, sz);
 }
 
@@ -653,4 +679,31 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+int
+pgaccess(uint64 va, int num, uint64 buf) {
+  if(num > 64)
+    return -1;
+  
+  uint64 bitmap = 0;
+  uint64 mask = 1;
+  uint64 complement=PTE_A;
+  complement=~complement;
+
+  struct proc *p = myproc();
+  
+  // Search for all the page in the process's page table.
+  int count = 0;
+  for(uint64 page = va; page < va + num * PGSIZE; page += PGSIZE) {
+      pte_t *pte = walk(p->pagetable, page, 0);
+      if(*pte & PTE_A) {
+        bitmap = bitmap | (mask<<count);
+        *pte = (*pte) & complement;     // reset the access bit
+      }
+      ++count;
+      //printf("bitmap:%p\n",bitmap);
+  }
+  copyout(p->pagetable, buf, (char *)&bitmap, sizeof(bitmap));
+  return 0;
 }
